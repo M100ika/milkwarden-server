@@ -11,7 +11,7 @@
   <!-- Supabase JS -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   
-  <!-- DataTables (поиск, сортировка, пагинация) -->
+  <!-- DataTables -->
   <link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/jquery.dataTables.min.css"/>
   <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
   <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
@@ -93,9 +93,12 @@
   <script>
     // ===== CONFIG =====
     const SUPABASE_URL = 'https://uhtbdcackeowuidgpkbt.supabase.co';
-    const SUPABASE_ANON_KEY = 'sb_publishable_mBFlx6DhZhvK_P9LcPswoA_VO-kn0M7'; // ← ВСТАВЬ ПОЛНЫЙ КЛЮЧ
+    // ⚠️ Ключ должен начинаться с 'eyJ...' (JWT), а не 'sb_publishable_...'
+    // Проверь в Supabase: Settings → API → anon public
+    const SUPABASE_ANON_KEY = 'sb_publishable_mBFlx6DhZhvK_P9LcPswoA_VO-kn0M7';
     
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    // ✅ Создаём клиент с уникальным именем
+    const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     let tableData = [];
 
     // ===== FORMATTING =====
@@ -126,7 +129,8 @@
       tbody.innerHTML = '<tr><td colspan="11" class="text-center py-8">⏳ Загрузка...</td></tr>';
 
       try {
-        let query = supabase.from('sessions').select('*').order('created_at', { ascending: false });
+        // ✅ ИСПРАВЛЕНО: supabase → supabaseClient
+        let query = supabaseClient.from('sessions').select('*').order('created_at', { ascending: false });
         
         // Filters
         const rfid = document.getElementById('rfidFilter').value.trim();
