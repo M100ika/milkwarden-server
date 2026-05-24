@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>📊 Sessions Dashboard</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Supabase JS -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  
+  <!-- DataTables (поиск, сортировка, пагинация) -->
+  <link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/jquery.dataTables.min.css"/>
+  <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
+
+  <style>
+    body { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }
+    .card { background: white; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); }
+    .dataTables_wrapper { font-size: 0.9rem; }
+    .loading { animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+  </style>
+</head>
+<body class="p-4 md:p-8">
+
+  <div class="max-w-7xl mx-auto">
+    <!-- Header -->
+    <div class="card p-6 mb-6">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-800">📋 Sessions Log</h1>
+          <p class="text-gray-500 text-sm">Публичный просмотр данных из Supabase</p>
+        </div>
+        <div class="flex gap-2">
+          <button id="refreshBtn" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm transition">
+            🔄 Обновить
+          </button>
+          <button id="exportBtn" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm transition">
+            📥 Экспорт CSV
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card p-4 mb-6">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <input type="text" id="rfidFilter" placeholder="🔍 RFID..." class="px-3 py-2 border rounded-lg text-sm"/>
+        <input type="number" id="espIdFilter" placeholder="🔢 ESP ID..." class="px-3 py-2 border rounded-lg text-sm"/>
+        <select id="statusFilter" class="px-3 py-2 border rounded-lg text-sm">
+          <option value="">Все статусы</option>
+          <option value="0">Успешно</option>
+          <option value="1">Ошибка</option>
+          <option value="2">Прервано</option>
+        </select>
+        <input type="date" id="dateFilter" class="px-3 py-2 border rounded-lg text-sm"/>
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div class="card p-4 overflow-x-auto">
+      <table id="sessionsTable" class="display w-full text-sm">
+        <thead class="bg-gray-50">
+          <tr>
+            <th>ID</th>
+            <th>ESP ID</th>
+            <th>RFID</th>
+            <th>Вес (нач.)</th>
+            <th>Вес (кон.)</th>
+            <th>Δ Вес</th>
+            <th>Старт</th>
+            <th>Конец</th>
+            <th>Длительность</th>
+            <th>Причина</th>
+            <th>Создано</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td colspan="11" class="text-center py-8 loading">Загрузка данных...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Footer -->
+    <p class="text-center text-gray-400 text-xs mt-6">
+      Данные обновляются в реальном времени • <a href="https://supabase.com" target="_blank" class="hover:underline">Supabase</a>
+    </p>
+  </div>
+
+  <script>
+    // ===== CONFIG =====
+    const SUPABASE_URL = 'https://uhtbdcackeowuidgpkbt.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_mBFlx6DhZhvK_P9LcPswoA_VO-kn0M7'; // ← ВСТАВЬ ПОЛНЫЙ КЛЮЧ
+    
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    let tableData = [];
+
+    // ===== FORMATTING =====
+    const fmt = {
+      weight: (v) => v != null ? `${v.toFixed(2)} г` : '—',
+      time: (ts) => ts ? new Date(ts).toLocaleString('ru-RU') : '—',
+      duration: (start, end) => {
+        if (!start || !end) return '—';
+        const sec = Math.round((end - start) / 1000);
+        if (sec < 60) return `${sec} сек`;
+        if (sec < 3600) return `${Math.round(sec/60)} мин`;
+        return `${Math.round(sec/3600)} ч ${Math.round((sec%3600)/60)} мин`;
+      },
+      reason: (code) => {
+        const map = { 0: '✅ Успешно', 1: '❌ Ошибка', 2: '⚠️ Прервано', null: '—' };
+        return map[code] ?? `Код: ${code}`;
+      },
+      delta: (w1, w2) => {
+        if (w1 == null || w2 == null) return '—';
+        const d = w2 - w1;
+        return `<span class="${d >= 0 ? 'text-emerald-600' : 'text-rose-600'} font-medium">${d >= 0 ? '+' : ''}${d.toFixed(2)}</span>`;
+      }
+    };
+
+    // ===== LOAD DATA =====
+    async function loadData() {
+      const tbody = document.querySelector('#sessionsTable tbody');
+      tbody.innerHTML = '<tr><td colspan="11" class="text-center py-8">⏳ Загрузка...</td></tr>';
+
+      try {
+        let query = supabase.from('sessions').select('*').order('created_at', { ascending: false });
+        
+        // Filters
+        const rfid = document.getElementById('rfidFilter').value.trim();
+        const espId = document.getElementById('espIdFilter').value;
+        const status = document.getElementById('statusFilter').value;
+        const date = document.getElementById('dateFilter').value;
+
+        if (rfid) query = query.ilike('rfid', `%${rfid}%`);
+        if (espId) query = query.eq('esp_id', parseInt(espId));
+        if (status) query = query.eq('end_reason', parseInt(status));
+        if (date) {
+          const start = new Date(date).toISOString();
+          const end = new Date(Date.parse(date) + 86400000).toISOString();
+          query = query.gte('created_at', start).lt('created_at', end);
+        }
+
+        const { data, error } = await query.limit(500);
+        if (error) throw error;
+
+        tableData = data || [];
+        renderTable(tableData);
+      } catch (err) {
+        console.error('Ошибка:', err);
+        tbody.innerHTML = `<tr><td colspan="11" class="text-center py-8 text-rose-600">❌ ${err.message}</td></tr>`;
+      }
+    }
+
+    // ===== RENDER TABLE =====
+    function renderTable(data) {
+      if ($.fn.DataTable.isDataTable('#sessionsTable')) {
+        $('#sessionsTable').DataTable().destroy();
+      }
+
+      const rows = data.map(row => `
+        <tr class="hover:bg-gray-50">
+          <td class="font-mono text-xs">${row.id}</td>
+          <td>${row.esp_id ?? '—'}</td>
+          <td class="font-mono">${row.rfid ?? '—'}</td>
+          <td>${fmt.weight(row.weight_initial)}</td>
+          <td>${fmt.weight(row.weight_final)}</td>
+          <td>${fmt.delta(row.weight_initial, row.weight_final)}</td>
+          <td>${fmt.time(row.start_time)}</td>
+          <td>${fmt.time(row.end_time)}</td>
+          <td>${fmt.duration(row.start_time, row.end_time)}</td>
+          <td>${fmt.reason(row.end_reason)}</td>
+          <td class="text-gray-500">${fmt.time(row.created_at)}</td>
+        </tr>
+      `).join('');
+
+      document.querySelector('#sessionsTable tbody').innerHTML = rows || '<tr><td colspan="11" class="text-center py-8">📭 Нет данных</td></tr>';
+
+      // Init DataTables
+      $('#sessionsTable').DataTable({
+        language: { url: '//cdn.datatables.net/plug-ins/1.13.7/i18n/ru.json' },
+        pageLength: 25,
+        order: [[10, 'desc']],
+        columnDefs: [
+          { targets: [3,4,5], className: 'text-right' },
+          { targets: [6,7,8,10], className: 'text-gray-600' }
+        ]
+      });
+    }
+
+    // ===== EVENTS =====
+    document.getElementById('refreshBtn').addEventListener('click', loadData);
+    
+    document.getElementById('exportBtn').addEventListener('click', () => {
+      if (!tableData.length) return alert('Нет данных для экспорта');
+      const headers = ['ID','ESP_ID','RFID','Weight_Init','Weight_Final','Start','End','Duration','Reason','Created'];
+      const csv = [headers.join(','), ...tableData.map(r => [
+        r.id, r.esp_id||'', `"${r.rfid||''}"`, r.weight_initial||'', r.weight_final||'',
+        r.start_time||'', r.end_time||'', fmt.duration(r.start_time, r.end_time),
+        fmt.reason(r.end_reason), r.created_at
+      ].join(','))].join('\n');
+      
+      const blob = new Blob(['\ufeff'+csv], {type: 'text/csv'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `sessions_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click(); URL.revokeObjectURL(url);
+    });
+
+    // Filter events (debounce)
+    let timeout;
+    ['rfidFilter','espIdFilter','statusFilter','dateFilter'].forEach(id => {
+      document.getElementById(id).addEventListener('input', () => {
+        clearTimeout(timeout);
+        timeout = setTimeout(loadData, 300);
+      });
+    });
+
+    // Init
+    document.addEventListener('DOMContentLoaded', loadData);
+  </script>
+</body>
+</html>
