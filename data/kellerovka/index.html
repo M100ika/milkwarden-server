@@ -107,7 +107,7 @@
       time: (ts) => ts ? new Date(ts).toLocaleString('ru-RU') : '—',
       duration: (start, end) => {
         if (!start || !end) return '—';
-        const sec = Math.round((end - start) / 1000);
+        const sec = Math.round(end - start);
         if (sec < 60) return `${sec} сек`;
         if (sec < 3600) return `${Math.round(sec/60)} мин`;
         return `${Math.round(sec/3600)} ч ${Math.round((sec%3600)/60)} мин`;
