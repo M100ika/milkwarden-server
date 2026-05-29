@@ -104,7 +104,11 @@
     // ===== FORMATTING =====
     const fmt = {
       weight: (v) => v != null ? `${v.toFixed(2)} г` : '—',
-      time: (ts) => ts ? new Date(ts).toLocaleString('ru-RU') : '—',
+      time: (ts) => {
+        if (!ts) return '—';
+        const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts);
+        return d.toLocaleString('ru-RU');
+      },
       duration: (start, end) => {
         if (!start || !end) return '—';
         const sec = Math.round(end - start);

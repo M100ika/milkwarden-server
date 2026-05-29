@@ -1,0 +1,1 @@
+https://m100ika.github.io/milkwarden-server/data/kellerovka/
